@@ -3,3 +3,9 @@ langchain-google-genai
 langchain-groq
 requests
 python-dotenv
+fastapi
+uvicorn
+sqlalchemy
+bcrypt
+python-jose[cryptography]
+pydantic

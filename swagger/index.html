@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YourCoolingPartner — API Documentation</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1a1a2e;
+        }
+        .topbar-wrapper img { content: url(''); }
+        .swagger-ui .topbar {
+            background: linear-gradient(135deg, #0f3460, #16213e);
+            padding: 15px 0;
+        }
+        .swagger-ui .topbar .download-url-wrapper { display: none; }
+        .custom-header {
+            background: linear-gradient(135deg, #0f3460, #16213e);
+            color: white;
+            text-align: center;
+            padding: 30px 20px 10px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .custom-header h1 {
+            margin: 0;
+            font-size: 28px;
+            letter-spacing: 1px;
+        }
+        .custom-header p {
+            margin: 8px 0 0;
+            opacity: 0.8;
+            font-size: 14px;
+        }
+        .custom-header .badge {
+            display: inline-block;
+            background: #e94560;
+            color: white;
+            padding: 3px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="custom-header">
+        <h1>❄️ YourCoolingPartner API</h1>
+        <p>AI-Powered AC & Home Service Technician Finder</p>
+        <span class="badge">v1.0.0</span>
+    </div>
+    <div id="swagger-ui"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script>
+        SwaggerUIBundle({
+            url: "./openapi.json",
+            dom_id: '#swagger-ui',
+            deepLinking: true,
+            presets: [
+                SwaggerUIBundle.presets.apis,
+                SwaggerUIBundle.SwaggerUIStandalonePreset
+            ],
+            layout: "BaseLayout",
+            defaultModelsExpandDepth: 1,
+            docExpansion: "list",
+            filter: true,
+            tryItOutEnabled: true
+        });
+    </script>
+</body>
+</html>

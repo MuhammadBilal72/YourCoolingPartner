@@ -1,0 +1,348 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "YourCoolingPartner API",
+    "description": "REST API for the YourCoolingPartner agentic system. Connects Android users with local AC & plumbing technicians using AI-powered search and ranking.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "YourCoolingPartner Team"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8000",
+      "description": "Local Development Server"
+    }
+  ],
+  "paths": {
+    "/auth/login": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Login / Auto-Register",
+        "description": "Login with mobile number and password. If the mobile number does not exist, a new account is automatically created — no separate signup required.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/LoginRequest" },
+              "examples": {
+                "new_user": {
+                  "summary": "First-time user (auto-registers)",
+                  "value": {
+                    "mobile_number": "03001234567",
+                    "password": "mypassword",
+                    "name": "Ahmed Khan",
+                    "role": "user"
+                  }
+                },
+                "existing_user": {
+                  "summary": "Returning user",
+                  "value": {
+                    "mobile_number": "03001234567",
+                    "password": "mypassword"
+                  }
+                },
+                "technician": {
+                  "summary": "Technician login",
+                  "value": {
+                    "mobile_number": "03009876543",
+                    "password": "techpass",
+                    "name": "Bilal AC Wala",
+                    "role": "technician"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login successful. Returns JWT token.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/LoginResponse" }
+              }
+            }
+          },
+          "401": {
+            "description": "Incorrect password for existing account."
+          }
+        }
+      }
+    },
+    "/api/chat": {
+      "post": {
+        "tags": ["AI Agent"],
+        "summary": "Chat with AI Agent",
+        "description": "Send a message to the LangGraph AI agent. The agent parses user intent (Roman Urdu / English), searches Google Maps for nearby technicians, and returns a ranked list. Supports multi-turn conversation — if info is missing, the agent asks for clarification.",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ChatRequest" },
+              "examples": {
+                "complete": {
+                  "summary": "Complete request (all info provided)",
+                  "value": { "message": "Mujhy Johar Town Lahore ma AC repair chaiye" }
+                },
+                "partial": {
+                  "summary": "Partial request (agent will ask for missing info)",
+                  "value": { "message": "Mujhy AC repair chaiye" }
+                },
+                "followup": {
+                  "summary": "Follow-up with missing info",
+                  "value": { "message": "Lahore, Johar Town" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Agent response. Check `status` field: `clarifying` means more info needed, `completed` means results are ready.",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "clarifying": {
+                    "summary": "Agent needs more info",
+                    "value": {
+                      "response": "Aap kis shehar aur ilaqay mein AC repair chahte hain?",
+                      "status": "clarifying"
+                    }
+                  },
+                  "completed": {
+                    "summary": "Agent returns ranked results",
+                    "value": {
+                      "response": "Yeh lijiye, aapke ilaqay ke behtareen options:\n1. Cool Master AC - Johar Town - Rating: 4.8 - 03001234567",
+                      "status": "completed",
+                      "job_id": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid JWT token." }
+        }
+      }
+    },
+    "/api/jobs": {
+      "post": {
+        "tags": ["Jobs"],
+        "summary": "Create a Job",
+        "description": "Manually create a new job ticket. Jobs are also auto-created when the AI chat flow completes.",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/JobCreate" },
+              "example": {
+                "city": "Lahore",
+                "town": "Johar Town",
+                "date": "2026-05-20",
+                "time": "10:00 AM"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Job created successfully.",
+            "content": {
+              "application/json": {
+                "example": { "message": "Job created", "job_id": 1 }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": ["Jobs"],
+        "summary": "Get Jobs",
+        "description": "Users see their own jobs. Technicians see all pending jobs available for bidding.",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "List of jobs.",
+            "content": {
+              "application/json": {
+                "example": [
+                  {
+                    "id": 1,
+                    "user_id": 1,
+                    "city": "Lahore",
+                    "town": "Johar Town",
+                    "status": "pending",
+                    "date": "2026-05-20",
+                    "time": "10:00 AM"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bids": {
+      "post": {
+        "tags": ["Bids"],
+        "summary": "Submit a Bid",
+        "description": "Technicians submit a price bid on an open job. Only users with role 'technician' can submit bids.",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/BidSubmit" },
+              "example": { "job_id": 1, "amount": 3500.0 }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bid submitted.",
+            "content": {
+              "application/json": {
+                "example": { "message": "Bid submitted", "bid_id": 1 }
+              }
+            }
+          },
+          "403": { "description": "Only technicians can submit bids." },
+          "404": { "description": "Job not found." }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/bids": {
+      "get": {
+        "tags": ["Bids"],
+        "summary": "View Bids on a Job",
+        "description": "See all bids placed by technicians on a specific job.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer" },
+            "description": "The ID of the job to view bids for."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of bids.",
+            "content": {
+              "application/json": {
+                "example": [
+                  { "id": 1, "technician_id": 3, "amount": 3500.0 },
+                  { "id": 2, "technician_id": 4, "amount": 3000.0 }
+                ]
+              }
+            }
+          },
+          "404": { "description": "Job not found." }
+        }
+      }
+    },
+    "/api/bookings": {
+      "post": {
+        "tags": ["Bookings"],
+        "summary": "Accept a Bid / Create Booking",
+        "description": "User accepts a technician's bid, which creates a confirmed booking and sets the job status to 'active'.",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/BookingCreate" },
+              "example": { "bid_id": 1 }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Booking confirmed.",
+            "content": {
+              "application/json": {
+                "example": { "message": "Booking confirmed!", "booking_id": 1 }
+              }
+            }
+          },
+          "403": { "description": "You can only accept bids on your own jobs." },
+          "404": { "description": "Bid not found." }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Get your token from POST /auth/login and pass it as: Authorization: Bearer <token>"
+      }
+    },
+    "schemas": {
+      "LoginRequest": {
+        "type": "object",
+        "required": ["mobile_number", "password"],
+        "properties": {
+          "mobile_number": { "type": "string", "example": "03001234567" },
+          "password": { "type": "string", "example": "mypassword" },
+          "name": { "type": "string", "example": "Ahmed Khan", "description": "Required only on first login (auto-register)." },
+          "role": { "type": "string", "enum": ["user", "technician"], "default": "user" }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "properties": {
+          "access_token": { "type": "string" },
+          "token_type": { "type": "string", "example": "bearer" },
+          "user": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "integer" },
+              "name": { "type": "string" },
+              "mobile_number": { "type": "string" },
+              "role": { "type": "string" }
+            }
+          }
+        }
+      },
+      "ChatRequest": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": { "type": "string", "example": "Mujhy Johar Town Lahore ma AC repair chaiye" }
+        }
+      },
+      "JobCreate": {
+        "type": "object",
+        "required": ["city", "town", "date", "time"],
+        "properties": {
+          "city": { "type": "string", "example": "Lahore" },
+          "town": { "type": "string", "example": "Johar Town" },
+          "date": { "type": "string", "example": "2026-05-20" },
+          "time": { "type": "string", "example": "10:00 AM" }
+        }
+      },
+      "BidSubmit": {
+        "type": "object",
+        "required": ["job_id", "amount"],
+        "properties": {
+          "job_id": { "type": "integer", "example": 1 },
+          "amount": { "type": "number", "example": 3500.0 }
+        }
+      },
+      "BookingCreate": {
+        "type": "object",
+        "required": ["bid_id"],
+        "properties": {
+          "bid_id": { "type": "integer", "example": 1 }
+        }
+      }
+    }
+  }
+}
