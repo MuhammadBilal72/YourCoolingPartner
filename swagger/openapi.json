@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "YourCoolingPartner API",
-    "description": "REST API for the YourCoolingPartner agentic system. Connects Android users with local AC & plumbing technicians using AI-powered search and ranking.",
-    "version": "1.0.0",
+    "description": "REST API for the YourCoolingPartner agentic system. Connects Android users with local AC & plumbing technicians using AI-powered search, ranking, and conversational booking — all through a chat interface.",
+    "version": "2.0.0",
     "contact": {
       "name": "YourCoolingPartner Team"
     }
@@ -18,37 +18,26 @@
     "/auth/login": {
       "post": {
         "tags": ["Authentication"],
-        "summary": "Login / Auto-Register",
-        "description": "Login with mobile number and password. If the mobile number does not exist, a new account is automatically created — no separate signup required.",
+        "summary": "Login",
+        "description": "Login with mobile number and password. Users must be pre-registered via seeds. No signup endpoint exists.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": { "$ref": "#/components/schemas/LoginRequest" },
               "examples": {
-                "new_user": {
-                  "summary": "First-time user (auto-registers)",
+                "user_login": {
+                  "summary": "Login as a user",
                   "value": {
                     "mobile_number": "03001234567",
-                    "password": "mypassword",
-                    "name": "Ahmed Khan",
-                    "role": "user"
+                    "password": "password123"
                   }
                 },
-                "existing_user": {
-                  "summary": "Returning user",
+                "technician_login": {
+                  "summary": "Login as a technician",
                   "value": {
-                    "mobile_number": "03001234567",
-                    "password": "mypassword"
-                  }
-                },
-                "technician": {
-                  "summary": "Technician login",
-                  "value": {
-                    "mobile_number": "03009876543",
-                    "password": "techpass",
-                    "name": "Bilal AC Wala",
-                    "role": "technician"
+                    "mobile_number": "03031234567",
+                    "password": "tech123"
                   }
                 }
               }
@@ -65,7 +54,7 @@
             }
           },
           "401": {
-            "description": "Incorrect password for existing account."
+            "description": "Mobile number not registered or incorrect password."
           }
         }
       }
@@ -74,7 +63,7 @@
       "post": {
         "tags": ["AI Agent"],
         "summary": "Chat with AI Agent",
-        "description": "Send a message to the LangGraph AI agent. The agent parses user intent (Roman Urdu / English), searches Google Maps for nearby technicians, and returns a ranked list. Supports multi-turn conversation — if info is missing, the agent asks for clarification.",
+        "description": "Send a message to the Brain Agent. The agent understands Roman Urdu/English and decides what action to take: search technicians, create a job, show bids, create a booking, or ask for clarification. All messages are persisted in the database.",
         "security": [{ "BearerAuth": [] }],
         "requestBody": {
           "required": true,
@@ -82,17 +71,25 @@
             "application/json": {
               "schema": { "$ref": "#/components/schemas/ChatRequest" },
               "examples": {
-                "complete": {
-                  "summary": "Complete request (all info provided)",
+                "search": {
+                  "summary": "Search for technicians",
                   "value": { "message": "Mujhy Johar Town Lahore ma AC repair chaiye" }
                 },
                 "partial": {
-                  "summary": "Partial request (agent will ask for missing info)",
+                  "summary": "Partial info (agent will clarify)",
                   "value": { "message": "Mujhy AC repair chaiye" }
                 },
-                "followup": {
-                  "summary": "Follow-up with missing info",
-                  "value": { "message": "Lahore, Johar Town" }
+                "schedule": {
+                  "summary": "Schedule a job (after searching)",
+                  "value": { "message": "Kal subah 10 baje" }
+                },
+                "check_bids": {
+                  "summary": "Check bids on posted job",
+                  "value": { "message": "Bids dikhao" }
+                },
+                "book": {
+                  "summary": "Book a technician",
+                  "value": { "message": "Bilal ko book karo" }
                 }
               }
             }
@@ -100,25 +97,74 @@
         },
         "responses": {
           "200": {
-            "description": "Agent response. Check `status` field: `clarifying` means more info needed, `completed` means results are ready.",
+            "description": "Agent response with action taken.",
             "content": {
               "application/json": {
+                "schema": { "$ref": "#/components/schemas/ChatResponse" },
                 "examples": {
-                  "clarifying": {
-                    "summary": "Agent needs more info",
+                  "clarify": {
+                    "summary": "Agent asks for more info",
                     "value": {
-                      "response": "Aap kis shehar aur ilaqay mein AC repair chahte hain?",
-                      "status": "clarifying"
+                      "response": "Aap kis shehar aur ilaqay mein service chahte hain?",
+                      "action": "clarify"
                     }
                   },
-                  "completed": {
-                    "summary": "Agent returns ranked results",
+                  "search_results": {
+                    "summary": "Agent returns ranked technicians",
                     "value": {
-                      "response": "Yeh lijiye, aapke ilaqay ke behtareen options:\n1. Cool Master AC - Johar Town - Rating: 4.8 - 03001234567",
-                      "status": "completed",
-                      "job_id": 1
+                      "response": "Yeh lijiye aapke top technicians:\n1. Cool Master AC — ⭐ 4.8 — 03001234567\n2. Bilal AC Wala — ⭐ 4.5 — 03031234567\nKab schedule karna chahte hain?",
+                      "action": "search_technicians"
+                    }
+                  },
+                  "job_created": {
+                    "summary": "Job posted successfully",
+                    "value": {
+                      "response": "✅ Aapka job post ho gaya hai! (Job #5)\nTechnicians se bids ka intezaar karein.",
+                      "action": "create_job"
+                    }
+                  },
+                  "bids_shown": {
+                    "summary": "Bids listed",
+                    "value": {
+                      "response": "🔔 Job #5 par 2 bids hain:\n1. Bilal AC Wala — Labour: Rs.1200\n2. Kamran Cooling — Labour: Rs.1800\nKisko book karna chahte hain?",
+                      "action": "show_bids"
+                    }
+                  },
+                  "booking_done": {
+                    "summary": "Booking confirmed",
+                    "value": {
+                      "response": "✅ Booking confirm ho gayi hai!\n👤 Technician: Bilal AC Wala\n💰 Labour: Rs.1200\nParts replacement charges alag se lagein ge.",
+                      "action": "create_booking"
                     }
                   }
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid JWT token." }
+        }
+      }
+    },
+    "/api/chat/history": {
+      "get": {
+        "tags": ["AI Agent"],
+        "summary": "Get Chat History",
+        "description": "Returns the full conversation history for the logged-in user. Call this when the app opens to restore the chat view.",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Conversation history with all messages.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ChatHistoryResponse" },
+                "example": {
+                  "conversation_id": 1,
+                  "messages": [
+                    { "id": 1, "sender": "user", "content": "Mujhy AC repair chaiye Johar Town Lahore", "timestamp": "2026-05-19T10:00:01" },
+                    { "id": 2, "sender": "agent", "content": "Yeh lijiye aapke top technicians...", "timestamp": "2026-05-19T10:00:05" },
+                    { "id": 3, "sender": "user", "content": "Kal 10 baje", "timestamp": "2026-05-19T10:01:00" },
+                    { "id": 4, "sender": "agent", "content": "✅ Job post ho gaya hai!", "timestamp": "2026-05-19T10:01:03" }
+                  ]
                 }
               }
             }
@@ -130,26 +176,21 @@
     "/api/jobs": {
       "post": {
         "tags": ["Jobs"],
-        "summary": "Create a Job",
-        "description": "Manually create a new job ticket. Jobs are also auto-created when the AI chat flow completes.",
+        "summary": "Create a Job (Manual)",
+        "description": "Manually create a job ticket. Jobs are also auto-created by the AI agent when the user provides scheduling info in chat.",
         "security": [{ "BearerAuth": [] }],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": { "$ref": "#/components/schemas/JobCreate" },
-              "example": {
-                "city": "Lahore",
-                "town": "Johar Town",
-                "date": "2026-05-20",
-                "time": "10:00 AM"
-              }
+              "example": { "city": "Lahore", "town": "Johar Town", "date": "2026-05-20", "time": "10:00 AM" }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Job created successfully.",
+            "description": "Job created.",
             "content": {
               "application/json": {
                 "example": { "message": "Job created", "job_id": 1 }
@@ -169,15 +210,7 @@
             "content": {
               "application/json": {
                 "example": [
-                  {
-                    "id": 1,
-                    "user_id": 1,
-                    "city": "Lahore",
-                    "town": "Johar Town",
-                    "status": "pending",
-                    "date": "2026-05-20",
-                    "time": "10:00 AM"
-                  }
+                  { "id": 1, "user_id": 1, "city": "Lahore", "town": "Johar Town", "status": "pending", "date": "2026-05-20", "time": "10:00 AM" }
                 ]
               }
             }
@@ -189,14 +222,14 @@
       "post": {
         "tags": ["Bids"],
         "summary": "Submit a Bid",
-        "description": "Technicians submit a price bid on an open job. Only users with role 'technician' can submit bids.",
+        "description": "Technicians submit a labour charge bid on an open job. Only users with role 'technician' can submit bids.",
         "security": [{ "BearerAuth": [] }],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": { "$ref": "#/components/schemas/BidSubmit" },
-              "example": { "job_id": 1, "amount": 3500.0 }
+              "example": { "job_id": 1, "amount": 1500.0 }
             }
           }
         },
@@ -225,8 +258,7 @@
             "name": "job_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "integer" },
-            "description": "The ID of the job to view bids for."
+            "schema": { "type": "integer" }
           }
         ],
         "responses": {
@@ -235,42 +267,13 @@
             "content": {
               "application/json": {
                 "example": [
-                  { "id": 1, "technician_id": 3, "amount": 3500.0 },
-                  { "id": 2, "technician_id": 4, "amount": 3000.0 }
+                  { "id": 1, "technician_id": 3, "amount": 1500.0 },
+                  { "id": 2, "technician_id": 4, "amount": 1200.0 }
                 ]
               }
             }
           },
           "404": { "description": "Job not found." }
-        }
-      }
-    },
-    "/api/bookings": {
-      "post": {
-        "tags": ["Bookings"],
-        "summary": "Accept a Bid / Create Booking",
-        "description": "User accepts a technician's bid, which creates a confirmed booking and sets the job status to 'active'.",
-        "security": [{ "BearerAuth": [] }],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/BookingCreate" },
-              "example": { "bid_id": 1 }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Booking confirmed.",
-            "content": {
-              "application/json": {
-                "example": { "message": "Booking confirmed!", "booking_id": 1 }
-              }
-            }
-          },
-          "403": { "description": "You can only accept bids on your own jobs." },
-          "404": { "description": "Bid not found." }
         }
       }
     }
@@ -281,7 +284,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "Get your token from POST /auth/login and pass it as: Authorization: Bearer <token>"
+        "description": "Get your token from POST /auth/login"
       }
     },
     "schemas": {
@@ -289,10 +292,8 @@
         "type": "object",
         "required": ["mobile_number", "password"],
         "properties": {
-          "mobile_number": { "type": "string", "example": "03001234567" },
-          "password": { "type": "string", "example": "mypassword" },
-          "name": { "type": "string", "example": "Ahmed Khan", "description": "Required only on first login (auto-register)." },
-          "role": { "type": "string", "enum": ["user", "technician"], "default": "user" }
+          "mobile_number": { "type": "string", "example": "03001234567", "description": "11-digit Pakistani mobile number starting with 03" },
+          "password": { "type": "string", "example": "password123" }
         }
       },
       "LoginResponse": {
@@ -318,6 +319,31 @@
           "message": { "type": "string", "example": "Mujhy Johar Town Lahore ma AC repair chaiye" }
         }
       },
+      "ChatResponse": {
+        "type": "object",
+        "properties": {
+          "response": { "type": "string", "description": "Agent's reply text" },
+          "action": { "type": "string", "enum": ["clarify", "search_technicians", "create_job", "show_bids", "create_booking"], "description": "What action the agent took" }
+        }
+      },
+      "ChatHistoryResponse": {
+        "type": "object",
+        "properties": {
+          "conversation_id": { "type": "integer", "nullable": true },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "integer" },
+                "sender": { "type": "string", "enum": ["user", "agent"] },
+                "content": { "type": "string" },
+                "timestamp": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
       "JobCreate": {
         "type": "object",
         "required": ["city", "town", "date", "time"],
@@ -333,14 +359,7 @@
         "required": ["job_id", "amount"],
         "properties": {
           "job_id": { "type": "integer", "example": 1 },
-          "amount": { "type": "number", "example": 3500.0 }
-        }
-      },
-      "BookingCreate": {
-        "type": "object",
-        "required": ["bid_id"],
-        "properties": {
-          "bid_id": { "type": "integer", "example": 1 }
+          "amount": { "type": "number", "example": 1500.0, "description": "Labour charge in PKR" }
         }
       }
     }

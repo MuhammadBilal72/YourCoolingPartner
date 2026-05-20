@@ -3,18 +3,18 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, field_validator
 from typing import Optional
 from jose import JWTError, jwt
-from datetime import timedelta
+from datetime import datetime, timedelta
 import re
 import uvicorn
 
-from db import SessionLocal, User, Job, Bid, Booking
+from db import SessionLocal, User, Job, Bid, Booking, Conversation, Message
 from auth import (
     verify_password, get_password_hash, create_access_token,
     SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 )
 from agent import graph
 
-app = FastAPI(title="YourCoolingPartner API", version="1.0.0")
+app = FastAPI(title="YourCoolingPartner API", version="2.0.0")
 
 # ==========================================
 # Database Dependency
@@ -27,13 +27,7 @@ def get_db():
         db.close()
 
 # ==========================================
-# In-Memory Chat Sessions (Multi-Turn)
-# ==========================================
-# Maps user_id -> { conversation_history, extracted_intent, extracted_city, extracted_town }
-chat_sessions = {}
-
-# ==========================================
-# Pydantic Request/Response Schemas
+# Pydantic Schemas
 # ==========================================
 class LoginRequest(BaseModel):
     mobile_number: str
@@ -42,7 +36,6 @@ class LoginRequest(BaseModel):
     @field_validator("mobile_number")
     @classmethod
     def validate_mobile(cls, v):
-        # Pakistani mobile format: 03XXXXXXXXX (11 digits)
         if not re.match(r"^03\d{9}$", v):
             raise ValueError("Invalid mobile number. Must be 11 digits starting with 03 (e.g., 03001234567)")
         return v
@@ -61,7 +54,7 @@ class BidSubmit(BaseModel):
     amount: float
 
 # ==========================================
-# Auth Dependency: Extract user from JWT
+# Auth Dependency
 # ==========================================
 def get_current_user(authorization: str = Header(None), db: Session = Depends(get_db)):
     if not authorization or not authorization.startswith("Bearer "):
@@ -83,7 +76,6 @@ def get_current_user(authorization: str = Header(None), db: Session = Depends(ge
 
 # ==========================================
 # POST /auth/login
-# Auto-creates account if mobile number doesn't exist
 # ==========================================
 @app.post("/auth/login")
 def login(req: LoginRequest, db: Session = Depends(get_db)):
@@ -106,82 +98,130 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
             "id": db_user.id,
             "name": db_user.name,
             "mobile_number": db_user.mobile_number,
-            "role": db_user.role
+            "role": db_user.role,
+            "location": getattr(db_user, "location", None),
+            "address": getattr(db_user, "address", None)
         }
     }
 
 # ==========================================
-# POST /api/chat — AI Agent Interaction
+# POST /api/chat — AI Agent (Persistent Chat)
 # ==========================================
 @app.post("/api/chat")
 def chat_with_agent(chat: ChatRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     user_id = current_user.id
-    user_text = chat.message
 
-    # Initialize session if first message
-    if user_id not in chat_sessions:
-        chat_sessions[user_id] = {
-            "conversation_history": [],
-            "extracted_intent": None,
-            "extracted_city": None,
-            "extracted_town": None
-        }
+    # Find or create conversation
+    conversation = db.query(Conversation).filter(Conversation.user_id == user_id).first()
+    if not conversation:
+        conversation = Conversation(user_id=user_id, created_at=datetime.now().isoformat())
+        db.add(conversation)
+        db.commit()
+        db.refresh(conversation)
 
-    session = chat_sessions[user_id]
-    session["conversation_history"].append({"role": "user", "content": user_text})
+    # Save user message
+    user_msg = Message(
+        conversation_id=conversation.id,
+        sender="user",
+        content=chat.message,
+        timestamp=datetime.now().isoformat()
+    )
+    db.add(user_msg)
+    db.commit()
 
-    # Build LangGraph state from session
+    # Load full conversation history from DB
+    messages = db.query(Message).filter(
+        Message.conversation_id == conversation.id
+    ).order_by(Message.timestamp).all()
+
+    history = [{"role": m.sender, "content": m.content} for m in messages]
+
+    # Build agent state
     current_state = {
-        "user_input": user_text,
-        "conversation_history": session["conversation_history"].copy(),
-        "extracted_intent": session["extracted_intent"],
-        "extracted_city": session["extracted_city"],
-        "extracted_town": session["extracted_town"],
-        "is_clarification_needed": False,
-        "bot_response": None,
+        "user_id": user_id,
+        "conversation_id": conversation.id,
+        "user_input": chat.message,
+        "conversation_history": history,
+        "action": None,
+        "extracted_intent": None,
+        "extracted_city": None,
+        "extracted_town": None,
+        "schedule_date": None,
+        "schedule_time": None,
+        "technician_name": None,
         "raw_businesses": [],
-        "final_ranked_response": None
+        "bot_response": None
     }
 
-    # Run the LangGraph agent
+    # Run the agent
     result = graph.invoke(current_state)
 
-    if result.get("is_clarification_needed"):
-        bot_msg = result.get("bot_response", "")
-        session["conversation_history"].append({"role": "bot", "content": bot_msg})
-        session["extracted_intent"] = result.get("extracted_intent") or session["extracted_intent"]
-        session["extracted_city"] = result.get("extracted_city") or session["extracted_city"]
-        session["extracted_town"] = result.get("extracted_town") or session["extracted_town"]
-        return {"response": bot_msg, "status": "clarifying"}
-    else:
-        final_output = result.get("final_ranked_response", "No results found.")
+    # Save bot response to DB
+    bot_response = result.get("bot_response", "Kuch samajh nahi aaya.")
+    bot_msg = Message(
+        conversation_id=conversation.id,
+        sender="agent",
+        content=bot_response,
+        timestamp=datetime.now().isoformat()
+    )
+    db.add(bot_msg)
+    db.commit()
 
-        # Auto-create a Job entry in the database
-        new_job = Job(
-            user_id=user_id,
-            city=result.get("extracted_city"),
-            town=result.get("extracted_town"),
-            status="pending",
-            date="Pending",
-            time="ASAP"
-        )
-        db.add(new_job)
-        db.commit()
-        db.refresh(new_job)
+    raw_businesses = result.get("raw_businesses") or []
+    found_technicians = []
+    
+    if raw_businesses:
+        phones = []
+        for b in raw_businesses:
+            phone = str(b.get("nationalPhoneNumber", "")).strip()
+            if phone:
+                phones.append(phone)
+                
+        if phones:
+            techs = db.query(User).filter(User.role == "technician", User.mobile_number.in_(phones)).all()
+            found_technicians = [
+                {
+                    "id": t.id, 
+                    "name": t.name, 
+                    "mobile_number": t.mobile_number, 
+                    "location": getattr(t, "location", None), 
+                    "address": getattr(t, "address", None)
+                }
+                for t in techs
+            ]
 
-        # Reset chat session for fresh conversation
-        chat_sessions[user_id] = {
-            "conversation_history": [],
-            "extracted_intent": None,
-            "extracted_city": None,
-            "extracted_town": None
-        }
+    return {
+        "response": bot_response,
+        "action": result.get("action", "clarify"),
+        "found_technicians": found_technicians,
+        "bookings": result.get("my_bookings", [])
+    }
 
-        return {
-            "response": final_output,
-            "status": "completed",
-            "job_id": new_job.id
-        }
+# ==========================================
+# GET /api/chat/history — Load chat on app open
+# ==========================================
+@app.get("/api/chat/history")
+def get_chat_history(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    conversation = db.query(Conversation).filter(Conversation.user_id == current_user.id).first()
+    if not conversation:
+        return {"conversation_id": None, "messages": []}
+
+    messages = db.query(Message).filter(
+        Message.conversation_id == conversation.id
+    ).order_by(Message.timestamp).all()
+
+    return {
+        "conversation_id": conversation.id,
+        "messages": [
+            {
+                "id": m.id,
+                "sender": m.sender,
+                "content": m.content,
+                "timestamp": m.timestamp
+            }
+            for m in messages
+        ]
+    }
 
 # ==========================================
 # POST /api/jobs — Create a job manually
@@ -202,27 +242,39 @@ def create_job(job: JobCreate, current_user: User = Depends(get_current_user), d
     return {"message": "Job created", "job_id": new_job.id}
 
 # ==========================================
-# GET /api/jobs — Fetch jobs (Technicians see pending jobs)
+# GET /api/jobs — Fetch jobs
 # ==========================================
 @app.get("/api/jobs")
 def get_jobs(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role == "technician":
-        jobs = db.query(Job).filter(Job.status == "pending").all()
+        pending_jobs = db.query(Job).filter(Job.status == "pending").all()
+        my_bookings = db.query(Booking).filter(Booking.technician_id == current_user.id).all()
+        booked_job_ids = [b.job_id for b in my_bookings if b.job_id]
+        booked_jobs = db.query(Job).filter(Job.id.in_(booked_job_ids)).all()
+        jobs = pending_jobs + booked_jobs
     else:
         jobs = db.query(Job).filter(Job.user_id == current_user.id).all()
 
-    return [
-        {
+    result = []
+    for j in jobs:
+        my_bid = None
+        if current_user.role == "technician":
+            bid = db.query(Bid).filter(Bid.job_id == j.id, Bid.technician_id == current_user.id).first()
+            if bid:
+                my_bid = bid.amount
+
+        result.append({
             "id": j.id,
             "user_id": j.user_id,
             "city": j.city,
             "town": j.town,
             "status": j.status,
             "date": j.date,
-            "time": j.time
-        }
-        for j in jobs
-    ]
+            "time": j.time,
+            "my_bid": my_bid
+        })
+
+    return result
 
 # ==========================================
 # POST /api/bids — Technician submits a bid
@@ -235,6 +287,10 @@ def submit_bid(bid: BidSubmit, current_user: User = Depends(get_current_user), d
     job = db.query(Job).filter(Job.id == bid.job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    existing_bid = db.query(Bid).filter(Bid.job_id == bid.job_id, Bid.technician_id == current_user.id).first()
+    if existing_bid:
+        raise HTTPException(status_code=400, detail="You have already submitted a bid for this job")
 
     new_bid = Bid(job_id=bid.job_id, technician_id=current_user.id, amount=bid.amount)
     db.add(new_bid)
@@ -256,6 +312,7 @@ def get_bids_for_job(job_id: int, current_user: User = Depends(get_current_user)
         {
             "id": b.id,
             "technician_id": b.technician_id,
+            "technician_name": b.technician.name if b.technician else f"Technician #{b.technician_id}",
             "amount": b.amount
         }
         for b in bids

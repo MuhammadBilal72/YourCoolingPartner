@@ -20,6 +20,15 @@ class User(Base):
     mobile_number = Column(String, unique=True, index=True)
     role = Column(String)  # 'user' or 'technician'
     hashed_password = Column(String)
+    location = Column(String, nullable=True)
+    address = Column(String, nullable=True)
+
+    def __repr__(self):
+        return (
+            f"User(id={self.id}, name='{self.name}', "
+            f"mobile='{self.mobile_number}', role='{self.role}', "
+            f"location='{self.location}', address='{self.address}')"
+        )
 
     jobs = relationship("Job", back_populates="user")
     bookings_as_user = relationship("Booking", back_populates="user", foreign_keys="Booking.user_id")
@@ -61,6 +70,7 @@ class Bid(Base):
 class Booking(Base):
     __tablename__ = "bookings"
     id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"))
     technician_id = Column(Integer, ForeignKey("users.id"))
     user_id = Column(Integer, ForeignKey("users.id"))
     date = Column(String)
@@ -69,6 +79,30 @@ class Booking(Base):
 
     user = relationship("User", back_populates="bookings_as_user", foreign_keys=[user_id])
     technician = relationship("User", back_populates="bookings_as_tech", foreign_keys=[technician_id])
+
+# ==========================================
+# Table: conversations
+# ==========================================
+class Conversation(Base):
+    __tablename__ = "conversations"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(String)
+
+    messages = relationship("Message", back_populates="conversation")
+
+# ==========================================
+# Table: messages
+# ==========================================
+class Message(Base):
+    __tablename__ = "messages"
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id"))
+    sender = Column(String)  # 'user' or 'agent'
+    content = Column(String)
+    timestamp = Column(String)
+
+    conversation = relationship("Conversation", back_populates="messages")
 
 # Create all tables
 Base.metadata.create_all(bind=engine)
