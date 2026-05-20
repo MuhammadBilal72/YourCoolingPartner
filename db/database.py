@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, Boolean
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./yourcoolingpartner.db"
@@ -34,6 +34,7 @@ class User(Base):
     bookings_as_user = relationship("Booking", back_populates="user", foreign_keys="Booking.user_id")
     bookings_as_tech = relationship("Booking", back_populates="technician", foreign_keys="Booking.technician_id")
     bids = relationship("Bid", back_populates="technician")
+    notifications = relationship("Notification", back_populates="receiver")
 
 # ==========================================
 # Table: jobs
@@ -103,6 +104,19 @@ class Message(Base):
     timestamp = Column(String)
 
     conversation = relationship("Conversation", back_populates="messages")
+
+# ==========================================
+# Table: notifications
+# ==========================================
+class Notification(Base):
+    __tablename__ = "notifications"
+    id = Column(Integer, primary_key=True, index=True)
+    receiver_id = Column(Integer, ForeignKey("users.id"))
+    content = Column(String)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(String)
+
+    receiver = relationship("User", back_populates="notifications")
 
 # Create all tables
 Base.metadata.create_all(bind=engine)

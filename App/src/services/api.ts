@@ -109,3 +109,14 @@ export async function submitBid(job_id: number, amount: number) {
 export async function getBidsForJob(jobId: number) {
   return request(ENDPOINTS.JOB_BIDS(jobId), 'GET');
 }
+
+// ==========================================
+// Notifications
+// ==========================================
+export async function getNotifications() {
+  return request('/api/notifications', 'GET');
+}
+
+export async function readNotification(notifId: number) {
+  return request(`/api/notifications/${notifId}/read`, 'POST');
+}

@@ -17,7 +17,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Colors, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
-import { TechnicianStackParamList } from '../types';
+import { TechnicianStackParamList, Notification } from '../types';
+import { getNotifications } from '../services/api';
 
 const { width } = Dimensions.get('window');
 
@@ -32,6 +33,23 @@ export default function TechHomeScreen({ navigation }: Props) {
   const card1Anim = useRef(new Animated.Value(0)).current;
   const card2Anim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const [unreadCount, setUnreadCount] = React.useState(0);
+
+  useEffect(() => {
+    fetchUnread();
+    const unsubscribe = navigation.addListener('focus', () => {
+      fetchUnread();
+    });
+    return unsubscribe;
+  }, [navigation]);
+
+  const fetchUnread = async () => {
+    const res = await getNotifications();
+    if (res.data) {
+      const unread = res.data.filter((n: Notification) => !n.is_read).length;
+      setUnreadCount(unread);
+    }
+  };
 
   useEffect(() => {
     Animated.sequence([
@@ -171,13 +189,26 @@ export default function TechHomeScreen({ navigation }: Props) {
         ]}
       >
         <View style={styles.headerTop}>
-          <View>
-            <Text style={styles.greeting}>Welcome back,</Text>
-            <Text style={styles.userName}>{user?.name || 'Technician'} 👋</Text>
+          <View style={styles.headerRight}>
+            <TouchableOpacity 
+              style={styles.notifBtn} 
+              onPress={() => navigation.navigate('Notifications')}
+            >
+              <Ionicons name="notifications-outline" size={22} color={Colors.textSecondary} />
+              {unreadCount > 0 && (
+                <View style={styles.notifBadge}>
+                  <Text style={styles.notifBadgeText}>{unreadCount}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.logoutBtn} onPress={logout}>
+              <Ionicons name="log-out-outline" size={22} color={Colors.textSecondary} />
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity style={styles.logoutBtn} onPress={logout}>
-            <Ionicons name="log-out-outline" size={22} color={Colors.textSecondary} />
-          </TouchableOpacity>
+        </View>
+        <View style={styles.headerNameContainer}>
+          <Text style={styles.greeting}>Welcome back,</Text>
+          <Text style={styles.userName} numberOfLines={2}>{user?.name || 'Technician'} 👋</Text>
         </View>
 
         {/* Status Bar */}
@@ -260,8 +291,11 @@ const styles = StyleSheet.create({
   },
   headerTop: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  headerNameContainer: {
+    marginTop: Spacing.sm,
   },
   greeting: {
     fontSize: FontSize.md,
@@ -277,6 +311,35 @@ const styles = StyleSheet.create({
     padding: Spacing.sm,
     borderRadius: BorderRadius.md,
     backgroundColor: Colors.surfaceElevated,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  notifBtn: {
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surfaceElevated,
+    position: 'relative',
+  },
+  notifBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    backgroundColor: Colors.primary,
+    borderRadius: 10,
+    width: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: Colors.background,
+  },
+  notifBadgeText: {
+    color: Colors.white,
+    fontSize: 10,
+    fontWeight: 'bold',
   },
   // Status bar
   statusBar: {

@@ -336,9 +336,19 @@ def create_booking_node(state: AgentState) -> AgentState:
         db.add(booking)
         job.status = "active"
         db.commit()
+        from db.database import Notification
+        from datetime import datetime
+
+        notif = Notification(
+            receiver_id=matched_bid.technician_id,
+            content=f"Congratulations! Booking #{job.id} has been confirmed.",
+            created_at=datetime.utcnow().isoformat()
+        )
+        db.add(notif)
+        db.commit()
         db.refresh(booking)
 
-        print(f"   ✅ Booking #{booking.id} confirmed!")
+        print(f"   ✅ Booking #{booking.id} confirmed and Notification sent!")
 
         return {
             **state,

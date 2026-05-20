@@ -15,6 +15,7 @@ import {
   Alert,
   ActivityIndicator,
   Dimensions,
+  Image,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -156,17 +157,16 @@ export default function LoginScreen() {
                 {
                   opacity: snowflakeOpacity,
                   transform: [{ scale: snowflakeScale }],
+                  backgroundColor: 'transparent',
+                  borderWidth: 0,
+                  shadowColor: 'transparent',
                 },
               ]}
             >
-              <LinearGradient
-                colors={['#0EA5E9', '#06D6A0']}
-                style={styles.logoGradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <Text style={styles.logoIcon}>❄️</Text>
-              </LinearGradient>
+              <Image
+                source={require('../../assets/logo.png')}
+                style={{ width: 90, height: 90, resizeMode: 'contain' }}
+              />
             </Animated.View>
             <Text style={styles.appName}>YourCoolingPartner</Text>
             <Text style={styles.tagline}>Premium AC Services at Your Doorstep</Text>

@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, field_validator
 from typing import Optional
@@ -7,12 +8,13 @@ from datetime import datetime, timedelta
 import re
 import uvicorn
 
-from db import SessionLocal, User, Job, Bid, Booking, Conversation, Message
+from db import SessionLocal, User, Job, Bid, Booking, Conversation, Message, Notification
 from auth import (
     verify_password, get_password_hash, create_access_token,
     SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 )
 from agent import graph
+from agent.log_viewer import get_recent_traces, is_configured as langsmith_configured
 
 app = FastAPI(title="YourCoolingPartner API", version="2.0.0")
 
@@ -319,7 +321,303 @@ def get_bids_for_job(job_id: int, current_user: User = Depends(get_current_user)
     ]
 
 # ==========================================
+# LangSmith Agent Logs — JSON API
+# ==========================================
+@app.get("/api/agent/logs")
+def get_agent_logs(limit: int = 20):
+    """Return recent agent execution traces from LangSmith."""
+    traces = get_recent_traces(limit=min(limit, 100))
+    return {
+        "configured": langsmith_configured(),
+        "project": "YourCoolingPartner",
+        "count": len(traces),
+        "traces": traces,
+    }
+
+
+# ==========================================
+# LangSmith Agent Logs — HTML Dashboard
+# ==========================================
+AGENT_LOGS_HTML = r"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Logs — YourCoolingPartner</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0f172a; color: #e2e8f0; padding: 24px;
+  }
+  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+  .header h1 { font-size: 24px; font-weight: 700; }
+  .header h1 span { color: #38bdf8; }
+  .badge {
+    padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  }
+  .badge.on { background: #166534; color: #86efac; }
+  .badge.off { background: #7f1d1d; color: #fca5a5; }
+  .stats { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+  .stat-card {
+    background: #1e293b; border-radius: 12px; padding: 16px 20px; flex: 1; min-width: 140px;
+  }
+  .stat-card .label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-card .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+  .trace {
+    background: #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 16px;
+    border-left: 4px solid #334155;
+  }
+  .trace.success { border-left-color: #22c55e; }
+  .trace.error { border-left-color: #ef4444; }
+  .trace-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px; }
+  .trace-title { font-size: 16px; font-weight: 600; }
+  .trace-meta { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+  .trace-status {
+    padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  }
+  .trace-status.ok { background: #166534; color: #86efac; }
+  .trace-status.err { background: #7f1d1d; color: #fca5a5; }
+  .children { margin-top: 12px; margin-left: 16px; border-left: 2px solid #334155; padding-left: 16px; }
+  .child-node {
+    background: #0f172a; border-radius: 8px; padding: 12px 16px; margin-bottom: 8px;
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;
+  }
+  .child-node .name { font-weight: 500; font-size: 14px; }
+  .child-node .type {
+    font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600;
+  }
+  .type-llm { background: #1e3a5f; color: #93c5fd; }
+  .type-chain { background: #3b1f5e; color: #d8b4fe; }
+  .type-tool { background: #1e3a2f; color: #86efac; }
+  .loading { text-align: center; padding: 48px; color: #64748b; }
+  .empty { text-align: center; padding: 48px; color: #64748b; }
+  .empty h3 { font-size: 18px; margin-bottom: 8px; }
+  .empty p { font-size: 14px; }
+  .empty code { background: #1e293b; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  .error-text { color: #fca5a5; font-size: 13px; margin-top: 4px; }
+  .msg-toggle {
+    background: none; border: 1px solid #334155; color: #94a3b8; cursor: pointer;
+    font-size: 12px; padding: 2px 8px; border-radius: 4px; margin-left: 8px;
+  }
+  .msg-toggle:hover { background: #334155; }
+  .msg-content {
+    display: none; margin-top: 8px; padding: 12px; background: #0f172a;
+    border-radius: 8px; font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12px; white-space: pre-wrap; overflow-x: auto; max-height: 300px; overflow-y: auto;
+  }
+  .msg-content.open { display: block; }
+  .refresh-btn {
+    background: #38bdf8; color: #0f172a; border: none; padding: 8px 16px;
+    border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 14px;
+  }
+  .refresh-btn:hover { background: #7dd3fc; }
+  .config-notice {
+    background: #1e293b; border-radius: 12px; padding: 32px; text-align: center; margin-top: 16px;
+  }
+  .config-notice h3 { font-size: 18px; margin-bottom: 8px; color: #fbbf24; }
+  .config-notice p { font-size: 14px; color: #94a3b8; margin-bottom: 12px; }
+  .config-notice code { background: #0f172a; padding: 2px 6px; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>❄️ Agent <span>Logs</span></h1>
+    <button class="refresh-btn" onclick="fetchTraces()">⟳ Refresh</button>
+  </div>
+  <div id="stats" class="stats"></div>
+  <div id="traces"></div>
+
+<script>
+async function fetchTraces() {
+  document.getElementById('traces').innerHTML = '<div class="loading">⏳ Loading traces...</div>';
+  try {
+    const res = await fetch('/api/agent/logs?limit=20');
+    const data = await res.json();
+    renderDashboard(data);
+  } catch (e) {
+    document.getElementById('traces').innerHTML =
+      '<div class="empty"><h3>❌ Failed to fetch logs</h3><p>' + e.message + '</p></div>';
+  }
+}
+
+function renderDashboard(data) {
+  renderStats(data);
+  const container = document.getElementById('traces');
+
+  if (!data.configured) {
+    container.innerHTML = `
+      <div class="config-notice">
+        <h3>⚠️ LangSmith Not Configured</h3>
+        <p>Add your LangSmith API key to <code>.env</code> to enable agent tracing.</p>
+        <p><code>LANGCHAIN_API_KEY="lsv2_pt_..."</code></p>
+      </div>`;
+    return;
+  }
+
+  if (data.count === 0) {
+    container.innerHTML = `
+      <div class="empty">
+        <h3>📭 No traces yet</h3>
+        <p>Send a message to <code>POST /api/chat</code> to generate agent traces.</p>
+      </div>`;
+    return;
+  }
+
+  let html = '';
+  for (const trace of data.traces) {
+    html += renderTrace(trace);
+  }
+  container.innerHTML = html;
+}
+
+function renderStats(data) {
+  document.getElementById('stats').innerHTML = `
+    <div class="stat-card">
+      <div class="label">Status</div>
+      <div class="value"><span class="badge ${data.configured ? 'on' : 'off'}">${data.configured ? 'Connected' : 'Off'}</span></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Traces</div>
+      <div class="value">${data.count}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Project</div>
+      <div class="value" style="font-size:16px;margin-top:8px;">${data.project}</div>
+    </div>`;
+}
+
+function renderTrace(trace) {
+  const hasError = !!trace.error;
+  const cls = hasError ? 'error' : 'success';
+  const statusCls = hasError ? 'err' : 'ok';
+  const statusText = hasError ? 'Error' : (trace.status || 'Success');
+  const dur = trace.duration_ms != null ? (trace.duration_ms / 1000).toFixed(2) + 's' : '—';
+  const time = trace.start_time ? new Date(trace.start_time).toLocaleString() : '—';
+  const tokens = trace.total_tokens != null ? trace.total_tokens + ' tokens' : '';
+
+  let html = `
+    <div class="trace ${cls}">
+      <div class="trace-header">
+        <div>
+          <div class="trace-title">🧠 ${escapeHtml(trace.name)}</div>
+          <div class="trace-meta">${time} · ${dur} ${tokens ? '· ' + tokens : ''}</div>
+        </div>
+        <div>
+          <span class="trace-status ${statusCls}">${statusText}</span>
+          <button class="msg-toggle" onclick="toggleMsg('inputs-${trace.id}')">📥 Input</button>
+          <button class="msg-toggle" onclick="toggleMsg('outputs-${trace.id}')">📤 Output</button>
+        </div>
+      </div>
+      <div id="inputs-${trace.id}" class="msg-content">${escapeHtml(JSON.stringify(trace.inputs, null, 2))}</div>
+      <div id="outputs-${trace.id}" class="msg-content">${escapeHtml(JSON.stringify(trace.outputs, null, 2))}</div>`;
+
+  if (hasError) {
+    html += `<div class="error-text">❌ ${escapeHtml(trace.error)}</div>`;
+  }
+
+  if (trace.children && trace.children.length > 0) {
+    html += '<div class="children">';
+    for (const child of trace.children) {
+      html += renderChild(child);
+    }
+    html += '</div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function renderChild(child) {
+  const typeCls = 'type-' + (child.run_type || 'chain');
+  const dur = child.duration_ms != null ? (child.duration_ms / 1000).toFixed(2) + 's' : '';
+  const tokens = child.total_tokens != null ? child.total_tokens + ' tok' : '';
+
+  let html = `
+    <div class="child-node">
+      <div>
+        <span class="name">${escapeHtml(child.name)}</span>
+        <span class="type ${typeCls}">${child.run_type || '?'}</span>
+        <button class="msg-toggle" onclick="toggleMsg('ci-${child.id}')">📥</button>
+        <button class="msg-toggle" onclick="toggleMsg('co-${child.id}')">📤</button>
+      </div>
+      <div style="font-size:12px;color:#94a3b8;">${dur} ${tokens ? '· ' + tokens : ''}</div>
+    </div>
+    <div id="ci-${child.id}" class="msg-content">${escapeHtml(JSON.stringify(child.inputs, null, 2))}</div>
+    <div id="co-${child.id}" class="msg-content">${escapeHtml(JSON.stringify(child.outputs, null, 2))}</div>`;
+
+  if (child.error) {
+    html += `<div class="error-text">❌ ${escapeHtml(child.error)}</div>`;
+  }
+
+  if (child.children && child.children.length > 0) {
+    for (const gc of child.children) {
+      html += '<div style="margin-left:16px;">' + renderChild(gc) + '</div>';
+    }
+  }
+
+  return html;
+}
+
+function toggleMsg(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('open');
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/[&<>"']/g, function(m) {
+    if (m === '&') return '&amp;'; if (m === '<') return '&lt;';
+    if (m === '>') return '&gt;'; if (m === '"') return '&quot;';
+    return '&#39;';
+  });
+}
+
+fetchTraces();
+</script>
+</body>
+</html>
+"""
+
+
+@app.get("/agent/logs/ui", response_class=HTMLResponse)
+def agent_logs_ui():
+    """Render the LangSmith agent traces dashboard."""
+    return AGENT_LOGS_HTML
+
+
+# ==========================================
 # Run the server
 # ==========================================
+# ==========================================
+# GET /api/notifications
+# ==========================================
+@app.get("/api/notifications")
+def get_notifications(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    notifs = db.query(Notification).filter(Notification.receiver_id == current_user.id).order_by(Notification.id.desc()).all()
+    return [
+        {
+            "id": n.id,
+            "content": n.content,
+            "is_read": n.is_read,
+            "created_at": n.created_at
+        }
+        for n in notifs
+    ]
+
+# ==========================================
+# POST /api/notifications/{id}/read
+# ==========================================
+@app.post("/api/notifications/{notif_id}/read")
+def read_notification(notif_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    notif = db.query(Notification).filter(Notification.id == notif_id, Notification.receiver_id == current_user.id).first()
+    if not notif:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    
+    notif.is_read = True
+    db.commit()
+    return {"message": "Notification marked as read"}
+
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

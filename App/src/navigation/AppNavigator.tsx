@@ -16,6 +16,7 @@ import TechHomeScreen from '../screens/TechHomeScreen';
 import JobListScreen from '../screens/JobListScreen';
 import JobDetailScreen from '../screens/JobDetailScreen';
 import MyBookingsScreen from '../screens/MyBookingsScreen';
+import NotificationsScreen from '../screens/NotificationsScreen';
 
 // Types
 import { RootStackParamList, TechnicianStackParamList } from '../types';
@@ -52,6 +53,7 @@ function TechnicianNavigator() {
       <TechStack.Screen name="JobList" component={JobListScreen} />
       <TechStack.Screen name="JobDetail" component={JobDetailScreen} />
       <TechStack.Screen name="MyBookings" component={MyBookingsScreen} />
+      <TechStack.Screen name="Notifications" component={NotificationsScreen} />
     </TechStack.Navigator>
   );
 }

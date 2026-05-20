@@ -16,6 +16,7 @@ export type TechnicianStackParamList = {
   JobList: undefined;
   JobDetail: { job: Job };
   MyBookings: undefined;
+  Notifications: undefined;
 };
 
 // ==========================================
@@ -67,4 +68,11 @@ export interface Bid {
   technician_id: number;
   technician_name?: string;
   amount: number;
+}
+
+export interface Notification {
+  id: number;
+  content: string;
+  is_read: boolean;
+  created_at: string;
 }
